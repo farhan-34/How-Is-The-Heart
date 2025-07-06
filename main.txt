@@ -1,44 +1,62 @@
 #include <WiFi.h>
-#include <WebServer.h>
+#include <HTTPClient.h>
 
-// Wi-Fi credentials
-const char *ssid = "hello";
-const char *password = "12345678";
+const char* ssid = "One";            // Your WiFi SSID
+const char* password = "12345678";   // Your WiFi Password
+const char* serverUrl = "http://192.168.43.253:8001/ecg";  // Your Mac IP and FastAPI port
 
-WebServer server(80);
+#define ECG_PIN 34
+#define LO_Minus_PIN 35
+#define LO_Plus_PIN 32
 
-// Define pins for AD8232
-#define ECG_PIN 34      // GPIO36 (VP) to read ECG signal
-#define LO_Minus_PIN 35 // GPIO25 for lead-off detection (-)
-#define LO_Plus_PIN 32  // GPIO26 for lead-off detection (+)
+const int ecgPin = ECG_PIN;
+const int loPlus = LO_Minus_PIN;
+const int loMinus = LO_Plus_PIN;
 
-// Pin definitions
-const int ecgPin = 34;  // ECG analog output
-const int loPlus = 35;  // Lead-off positive
-const int loMinus = 32; // Lead-off negative
 
-void setup()
-{
-    Serial.begin(115200);
 
-    pinMode(loPlus, INPUT);
-    pinMode(loMinus, INPUT);
-    analogReadResolution(12); // ESP32 ADC is 12-bit (0-4095)
+void setup() {
+  Serial.begin(115200);
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting to WiFi");
+  
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  
+  Serial.println("\nWiFi connected.");
+  Serial.print("ESP IP address: ");
+  Serial.println(WiFi.localIP());
 }
 
-void loop()
-{
-    // Check if electrodes are attached
-    if (digitalRead(loPlus) == 1 || digitalRead(loMinus) == 1)
-    {
-        Serial.println("⚠️ Leads off. Please check electrode contact.");
+void loop() {
+  if (WiFi.status() == WL_CONNECTED) {
+    if (digitalRead(loPlus) == 1 || digitalRead(loMinus) == 1) {
+      Serial.println("Leads off");
+      continue;
     }
-    else
-    {
-        int ecgValue = analogRead(ecgPin);
-        Serial.println(ecgValue); // You can use Serial Plotter to visualize
+    HTTPClient http;
+    http.begin(serverUrl);
+    http.addHeader("Content-Type", "application/json");
+
+    // Send dummy timestamp and value
+    unsigned long timestamp = millis();
+    int value = analogRead(ecgPin);
+
+    String payload = "{\"timestamp\":" + String(timestamp) + ",\"value\":" + String(value) + "}";
+    int httpResponseCode = http.POST(payload);
+
+    if (httpResponseCode > 0) {
+      Serial.printf("✅ POST Success: %d\n", httpResponseCode);
+    } else {
+      Serial.printf("❌ POST Error: %s\n", http.errorToString(httpResponseCode).c_str());
     }
 
-    delay(20); // ~200 samples/second
+    http.end();
+  } else {
+    Serial.println("⚠️ WiFi not connected");
+  }
+
+  delay(20);
 }
-
