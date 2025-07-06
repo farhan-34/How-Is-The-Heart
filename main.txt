@@ -3,7 +3,7 @@
 
 const char* ssid = "One";            // Your WiFi SSID
 const char* password = "12345678";   // Your WiFi Password
-const char* serverUrl = "http://192.168.43.253:8001/ecg";  // Your Mac IP and FastAPI port
+const char* serverUrl = "http://192.168.43.253:8001/ecg";  // FastAPI server endpoint
 
 #define ECG_PIN 34
 #define LO_Minus_PIN 35
@@ -13,10 +13,33 @@ const int ecgPin = ECG_PIN;
 const int loPlus = LO_Minus_PIN;
 const int loMinus = LO_Plus_PIN;
 
+// Moving average filter
+#define BUFFER_SIZE 5
+int ecgBuffer[BUFFER_SIZE];
+int bufferIndex = 0;
+bool bufferFilled = false;
 
+int getFilteredECGValue(int rawValue) {
+  ecgBuffer[bufferIndex] = rawValue;
+  bufferIndex = (bufferIndex + 1) % BUFFER_SIZE;
+
+  int sum = 0;
+  int count = bufferFilled ? BUFFER_SIZE : bufferIndex;
+
+  for (int i = 0; i < count; i++) {
+    sum += ecgBuffer[i];
+  }
+
+  if (bufferIndex == 0) bufferFilled = true;
+
+  return sum / count;
+}
 
 void setup() {
   Serial.begin(115200);
+  pinMode(loPlus, INPUT);
+  pinMode(loMinus, INPUT);
+
   WiFi.begin(ssid, password);
   Serial.print("Connecting to WiFi");
   
@@ -33,22 +56,25 @@ void setup() {
 void loop() {
   if (WiFi.status() == WL_CONNECTED) {
     if (digitalRead(loPlus) == 1 || digitalRead(loMinus) == 1) {
-      Serial.println("Leads off");
-      continue;
+      Serial.println("⚠️ Leads off");
+      delay(500);
+      return;
     }
+
+    int rawValue = analogRead(ecgPin);
+    int filteredValue = getFilteredECGValue(rawValue);
+    unsigned long timestamp = millis();
+
+    String payload = "{\"timestamp\":" + String(timestamp) + ",\"value\":" + String(filteredValue) + "}";
+
     HTTPClient http;
     http.begin(serverUrl);
     http.addHeader("Content-Type", "application/json");
-
-    // Send dummy timestamp and value
-    unsigned long timestamp = millis();
-    int value = analogRead(ecgPin);
-
-    String payload = "{\"timestamp\":" + String(timestamp) + ",\"value\":" + String(value) + "}";
+    
     int httpResponseCode = http.POST(payload);
 
     if (httpResponseCode > 0) {
-      Serial.printf("✅ POST Success: %d\n", httpResponseCode);
+      Serial.printf("✅ POST Success: %d | Value: %d\n", httpResponseCode, filteredValue);
     } else {
       Serial.printf("❌ POST Error: %s\n", http.errorToString(httpResponseCode).c_str());
     }
@@ -58,5 +84,5 @@ void loop() {
     Serial.println("⚠️ WiFi not connected");
   }
 
-  delay(20);
+  delay(20);  // Sampling rate ~50Hz (adjust as needed)
 }
